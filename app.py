@@ -1,62 +1,90 @@
 import streamlit as st
 import pandas as pd
 import joblib
-import os
+import numpy as np
+
+st.set_page_config(page_title="🔮 Insurance Renewal Prediction", layout="wide")
 
 st.title("🔮 Insurance Renewal Prediction App")
 st.write("Upload customer data to predict renewal probabilities.")
 
-# --- Load models safely ---
-MODEL_PATH = os.path.join("models", "renewal_model.pkl")
-SCALER_PATH = os.path.join("models", "scaler.pkl")
-ENCODER_PATH = os.path.join("models", "encoder.pkl")
+# ======================
+# Load trained components
+# ======================
+MODEL_PATH = "renewal_model.pkl"
+SCALER_PATH = "scaler.pkl"
+ENCODER_PATH = "encoder.pkl"
 
 try:
     model = joblib.load(MODEL_PATH)
     scaler = joblib.load(SCALER_PATH)
-    encoder = joblib.load(ENCODER_PATH)
+    encoders = joblib.load(ENCODER_PATH)   # dict of label encoders
 except FileNotFoundError:
-    st.error("Model, scaler, or encoder file not found. Please check 'models/' folder.")
+    st.error("❌ Model, scaler, or encoder file not found. Make sure all .pkl files are in the same folder as app.py.")
     st.stop()
 
-# --- File uploader ---
-uploaded_file = st.file_uploader("Upload test.csv", type=["csv"])
+# ======================
+# File upload section
+# ======================
+uploaded_file = st.file_uploader("📂 Upload test.csv file", type=["csv"])
 
 if uploaded_file:
     data = pd.read_csv(uploaded_file)
-    st.write("### 📊 Uploaded Data Preview", data.head())
+    st.subheader("📊 Uploaded Data Preview")
+    st.dataframe(data.head())
 
-    # --- Drop ID if present ---
+    # Drop ID if present
     X = data.drop(columns=['id'], errors='ignore')
 
-    # --- Handle categorical encoding ---
+    # Handle missing values
+    X = X.fillna(X.median(numeric_only=True))
+
+    # Encode categorical columns
     cat_cols = ['sourcing_channel', 'residence_area_type']
     for col in cat_cols:
         if col in X.columns:
-            X[col] = encoder.transform(X[col])
+            le = encoders.get(col)
+            if le:
+                # Map unknown categories safely
+                X[col] = X[col].map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
+            else:
+                st.warning(f"No encoder found for {col}. Column skipped.")
 
-    # --- Handle missing values ---
-    X = X.fillna(X.median())
+    # ======================
+    # Prediction
+    # ======================
+    try:
+        if hasattr(model, 'coef_'):  # Logistic Regression
+            X_scaled = scaler.transform(X)
+            preds = model.predict_proba(X_scaled)[:, 1]
+        else:  # Random Forest
+            preds = model.predict_proba(X)[:, 1]
+    except Exception as e:
+        st.error(f"Error during prediction: {e}")
+        st.stop()
 
-    # --- Scale numerical features ---
-    X_scaled = scaler.transform(X)
-
-    # --- Make predictions ---
-    preds = model.predict_proba(X_scaled)[:, 1]
-
-    # --- Add results ---
+    # Combine with original data
     data['Renewal_Probability'] = preds
 
-    st.write("### 🔍 Renewal Probability per Customer")
-    st.dataframe(data[['id', 'Renewal_Probability']])
+    st.subheader("🔍 Predicted Renewal Probabilities")
+    st.dataframe(data[['id', 'Renewal_Probability']].head(20))
 
-    # --- Visualization ---
+    # ======================
+    # Visualization
+    # ======================
+    st.subheader("📈 Renewal Probability Distribution")
     st.bar_chart(data['Renewal_Probability'])
 
-    # --- Download ---
+    # ======================
+    # Download option
+    # ======================
+    csv = data.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="Download Predictions",
-        data=data.to_csv(index=False),
-        file_name="renewal_predictions.csv",
-        mime="text/csv"
+        label="⬇️ Download Predictions as CSV",
+        data=csv,
+        file_name='renewal_predictions.csv',
+        mime='text/csv'
     )
+
+else:
+    st.info("👆 Upload a CSV file to begin.")
