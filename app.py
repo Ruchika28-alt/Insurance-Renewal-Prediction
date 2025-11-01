@@ -4,7 +4,9 @@ import numpy as np
 import joblib
 import plotly.graph_objects as go
 import plotly.express as px
+from datetime import date, datetime
 
+# App setup
 st.set_page_config(page_title="🔮 Insurance Renewal Prediction", layout="wide")
 st.title("🔮 Insurance Renewal Prediction App")
 st.write("Upload customer data or enter details manually to predict renewal probabilities with visual insights.")
@@ -88,15 +90,52 @@ if mode == "Single Entry":
     st.subheader("🧍 Enter Customer Details")
 
     perc_premium_paid_by_cash_credit = st.number_input("Percentage of Premium Paid by Cash/Credit", 0.0, 1.0, 0.5)
-    age_in_days = st.number_input("Age in Days", 5000, 40000, 15000)
+    
+    # Take Date of Birth and calculate age
+    dob = st.date_input("Date of Birth", date(1990, 1, 1), help="Select the customer's date of birth.")
+    today = date.today()
+    age_years = (today - dob).days / 365.25
+    age_in_days = age_years * 365.25
+
+    st.info(f"🧓 Age calculated: **{age_years:.1f} years**")
+
     Income = st.number_input("Income", 0, 10000000, 300000)
-    Count_3_6_months_late = st.number_input("Count (3-6 months late)", 0.0, 10.0, 0.0)
-    Count_6_12_months_late = st.number_input("Count (6-12 months late)", 0.0, 10.0, 0.0)
-    Count_more_than_12_months_late = st.number_input("Count (>12 months late)", 0.0, 10.0, 0.0)
+    Count_3_6_months_late = st.number_input("Count (3-6 months late)", 0.0, 10.0, 0.0,
+        help="Number of times customer paid premiums 3–6 months late.")
+    Count_6_12_months_late = st.number_input("Count (6-12 months late)", 0.0, 10.0, 0.0,
+        help="Number of times customer paid premiums 6–12 months late.")
+    Count_more_than_12_months_late = st.number_input("Count (>12 months late)", 0.0, 10.0, 0.0,
+        help="Number of times customer paid premiums more than 12 months late.")
     application_underwriting_score = st.number_input("Application Underwriting Score", 0.0, 100.0, 99.0)
     no_of_premiums_paid = st.number_input("Number of Premiums Paid", 0, 100, 10)
-    sourcing_channel = st.selectbox("Sourcing Channel", ["A", "B", "C", "D", "E"])
-    residence_area_type = st.selectbox("Residence Area Type", ["Urban", "Rural"])
+
+    # Full names for sourcing channel
+    channel_mapping = {
+        "Agent / Advisor (A)": "A",
+        "Branch Office (B)": "B",
+        "Corporate Tie-up / Bancassurance (C)": "C",
+        "Digital / Online (D)": "D",
+        "Telemarketing / Call Center (E)": "E"
+    }
+    sourcing_channel_display = st.selectbox(
+        "Sourcing Channel",
+        list(channel_mapping.keys()),
+        help="Select how the policy was originally sourced."
+    )
+    sourcing_channel = channel_mapping[sourcing_channel_display]
+
+    # Full names for residence area
+    area_mapping = {
+        "Urban (City / Town)": "Urban",
+        "Rural (Village / Non-urban)": "Rural"
+    }
+    residence_display = st.selectbox(
+        "Residence Area Type",
+        list(area_mapping.keys()),
+        help="Select where the customer resides."
+    )
+    residence_area_type = area_mapping[residence_display]
+
     premium = st.number_input("Premium Amount", 0, 100000, 5000)
 
     input_data = pd.DataFrame({
@@ -141,10 +180,20 @@ if mode == "Single Entry":
 # ======================
 else:
     st.subheader("📂 Upload Customer Data (CSV)")
+    st.markdown("Make sure your CSV includes a **Date_of_Birth** column or **age_in_days** column.")
+
     uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
     if uploaded_file:
         data = pd.read_csv(uploaded_file)
+
+        # Convert DOB to age if present
+        if "Date_of_Birth" in data.columns:
+            today = date.today()
+            data["age_in_days"] = data["Date_of_Birth"].apply(
+                lambda d: (today - pd.to_datetime(d).date()).days if pd.notnull(d) else np.nan
+            )
+
         st.dataframe(data.head())
 
         X_final = prepare_input(data)
