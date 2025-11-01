@@ -1,24 +1,30 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import os
 
-st.title("🔮 Insurance Policy Renewal Prediction")
+# Load model and scaler safely
+MODEL_PATH = os.path.join("models", "renewal_model.pkl")
+SCALER_PATH = os.path.join("models", "scaler.pkl")
+
+st.title("🔮 Insurance Renewal Prediction")
 st.write("Upload customer data to predict renewal probabilities")
 
-# Load trained model and scaler
-model = joblib.load("renewal_model.pkl")
-scaler = joblib.load("scaler.pkl")
+try:
+    model = joblib.load(MODEL_PATH)
+    scaler = joblib.load(SCALER_PATH)
+except FileNotFoundError:
+    st.error("Model files not found. Please ensure 'renewal_model.pkl' and 'scaler.pkl' are in the 'models/' folder.")
+    st.stop()
 
 uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
-
 if uploaded_file:
     data = pd.read_csv(uploaded_file)
     st.write("### Uploaded Data Preview", data.head())
 
-    # Drop id if present
     X = data.drop(columns=['id'], errors='ignore')
 
-    # Apply scaling if Logistic Regression
+    # Check if logistic regression
     if hasattr(model, 'coef_'):
         X_scaled = scaler.transform(X)
         preds = model.predict_proba(X_scaled)[:,1]
