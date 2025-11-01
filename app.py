@@ -2,10 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import plotly.graph_objects as go
+import plotly.express as px
 
 st.set_page_config(page_title="🔮 Insurance Renewal Prediction", layout="wide")
 st.title("🔮 Insurance Renewal Prediction App")
-st.write("Upload customer data or enter details manually to predict renewal probabilities.")
+st.write("Upload customer data or enter details manually to predict renewal probabilities with visual insights.")
 
 # Load model, scaler, encoder
 MODEL_PATH = "renewal_model.pkl"
@@ -20,15 +22,11 @@ except FileNotFoundError:
     st.error("❌ Model, scaler, or encoder file not found. Ensure all .pkl files are in this folder.")
     st.stop()
 
-# Sidebar
-st.sidebar.header("⚙️ Select Prediction Mode")
-mode = st.sidebar.radio("Choose an option:", ["Single Entry", "Batch Upload (CSV)"])
-
-# Get feature names from scaler if available
+# Handle scaler feature names
 try:
-    scaler_features = scaler.feature_names_in_
+    expected_features = list(scaler.feature_names_in_)
 except AttributeError:
-    scaler_features = [
+    expected_features = [
         "perc_premium_paid_by_cash_credit",
         "age_in_days",
         "Income",
@@ -43,14 +41,55 @@ except AttributeError:
 cat_cols = ["sourcing_channel", "residence_area_type"]
 
 # ======================
+# FUNCTION: CLEAN INPUT
+# ======================
+def prepare_input(df):
+    """Align columns with scaler and encoder expectations."""
+    df = df.copy()
+
+    # Encode categorical columns
+    for col in cat_cols:
+        if col in df.columns and col in encoders:
+            le = encoders[col]
+            df[col] = df[col].map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
+
+    # Add missing numeric features
+    for col in expected_features:
+        if col not in df.columns:
+            df[col] = 0
+
+    # Keep only expected numeric features
+    X_num = df[expected_features].copy()
+
+    # Scale numeric safely
+    X_num_scaled = pd.DataFrame(
+        scaler.transform(X_num),
+        columns=expected_features
+    )
+
+    # Combine numeric + categorical (if exist)
+    for col in cat_cols:
+        if col in df.columns:
+            X_num_scaled[col] = df[col]
+
+    return X_num_scaled
+
+
+# ======================
+# SIDEBAR MODE
+# ======================
+st.sidebar.header("⚙️ Select Prediction Mode")
+mode = st.sidebar.radio("Choose an option:", ["Single Entry", "Batch Upload (CSV)"])
+
+# ======================
 # SINGLE ENTRY MODE
 # ======================
 if mode == "Single Entry":
     st.subheader("🧍 Enter Customer Details")
 
     perc_premium_paid_by_cash_credit = st.number_input("Percentage of Premium Paid by Cash/Credit", 0.0, 1.0, 0.5)
-    age_in_days = st.number_input("Age in Days", min_value=5000, max_value=40000, value=15000)
-    Income = st.number_input("Income", min_value=0, max_value=10000000, value=300000)
+    age_in_days = st.number_input("Age in Days", 5000, 40000, 15000)
+    Income = st.number_input("Income", 0, 10000000, 300000)
     Count_3_6_months_late = st.number_input("Count (3-6 months late)", 0.0, 10.0, 0.0)
     Count_6_12_months_late = st.number_input("Count (6-12 months late)", 0.0, 10.0, 0.0)
     Count_more_than_12_months_late = st.number_input("Count (>12 months late)", 0.0, 10.0, 0.0)
@@ -74,31 +113,28 @@ if mode == "Single Entry":
         "premium": [premium],
     })
 
-    # Encode categorical
-    for col in cat_cols:
-        if col in encoders:
-            le = encoders[col]
-            input_data[col] = input_data[col].map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
-
-    # Align columns to scaler
-    for col in scaler_features:
-        if col not in input_data.columns:
-            input_data[col] = 0  # add missing feature if any
-
-    input_data = input_data[[*scaler_features, *cat_cols]]
-
-    # Scale numeric part
-    input_data[scaler_features] = scaler.transform(input_data[scaler_features])
-
-    # Predict
-    prob = model.predict_proba(input_data)[:, 1][0]
+    X_final = prepare_input(input_data)
+    prob = model.predict_proba(X_final)[:, 1][0]
 
     st.markdown("---")
     st.success(f"**Predicted Renewal Probability:** {prob:.2%}")
-    if prob > 0.6:
-        st.info("✅ This customer is likely to renew their policy.")
-    else:
-        st.warning("⚠️ This customer might not renew. Consider customer engagement strategies.")
+
+    # Gauge Visualization
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=prob * 100,
+        title={'text': "Renewal Probability (%)"},
+        gauge={
+            'axis': {'range': [0, 100]},
+            'bar': {'color': "green" if prob > 0.6 else "red"},
+            'steps': [
+                {'range': [0, 40], 'color': "#ffcccc"},
+                {'range': [40, 70], 'color': "#fff4cc"},
+                {'range': [70, 100], 'color': "#d9ffcc"},
+            ],
+        }
+    ))
+    st.plotly_chart(fig, use_container_width=True)
 
 # ======================
 # BATCH UPLOAD MODE
@@ -111,30 +147,31 @@ else:
         data = pd.read_csv(uploaded_file)
         st.dataframe(data.head())
 
-        X = data.drop(columns=["id"], errors="ignore")
-        X = X.fillna(X.median(numeric_only=True))
-
-        for col in cat_cols:
-            if col in encoders:
-                le = encoders[col]
-                X[col] = X[col].map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
-
-        for col in scaler_features:
-            if col not in X.columns:
-                X[col] = 0
-
-        X = X[[*scaler_features, *cat_cols]]
-        X[scaler_features] = scaler.transform(X[scaler_features])
-
-        preds = model.predict_proba(X)[:, 1]
+        X_final = prepare_input(data)
+        preds = model.predict_proba(X_final)[:, 1]
         data["Renewal_Probability"] = preds
 
         st.subheader("🔍 Predicted Renewal Probabilities")
         st.dataframe(data.head(10))
-        st.bar_chart(data["Renewal_Probability"])
+
+        # Visualization
+        fig1 = px.histogram(
+            data,
+            x="Renewal_Probability",
+            nbins=20,
+            title="Distribution of Renewal Probabilities",
+            color_discrete_sequence=["#2b8cbe"]
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+
+        avg_prob = data["Renewal_Probability"].mean()
+        high_prob_pct = (data["Renewal_Probability"] > 0.6).mean() * 100
+
+        col1, col2 = st.columns(2)
+        col1.metric("Average Renewal Probability", f"{avg_prob:.2%}")
+        col2.metric("Customers Likely to Renew (>0.6)", f"{high_prob_pct:.1f}%")
 
         csv = data.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Predictions", csv, "renewal_predictions.csv", "text/csv")
-
     else:
         st.info("👆 Upload a CSV file to predict renewal probabilities in bulk.")
