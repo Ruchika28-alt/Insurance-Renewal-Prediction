@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import date, datetime
 
-# App setup
+# App config
 st.set_page_config(page_title="🔮 Insurance Renewal Prediction", layout="wide")
 st.title("🔮 Insurance Renewal Prediction App")
 st.write("Upload customer data or enter details manually to predict renewal probabilities with visual insights.")
@@ -21,10 +21,10 @@ try:
     scaler = joblib.load(SCALER_PATH)
     encoders = joblib.load(ENCODER_PATH)
 except FileNotFoundError:
-    st.error("❌ Model, scaler, or encoder file not found. Ensure all .pkl files are in this folder.")
+    st.error("❌ Model, scaler, or encoder file not found. Ensure all .pkl files are present.")
     st.stop()
 
-# Handle scaler feature names
+# Expected features
 try:
     expected_features = list(scaler.feature_names_in_)
 except AttributeError:
@@ -37,7 +37,7 @@ except AttributeError:
         "Count_more_than_12_months_late",
         "application_underwriting_score",
         "no_of_premiums_paid",
-        "premium"
+        "premium",
     ]
 
 cat_cols = ["sourcing_channel", "residence_area_type"]
@@ -46,33 +46,33 @@ cat_cols = ["sourcing_channel", "residence_area_type"]
 # FUNCTION: CLEAN INPUT
 # ======================
 def prepare_input(df):
-    """Align columns with scaler and encoder expectations."""
     df = df.copy()
 
-    # Encode categorical columns
+    # Encode categoricals
     for col in cat_cols:
         if col in df.columns and col in encoders:
             le = encoders[col]
-            df[col] = df[col].map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
+            df[col] = df[col].apply(lambda x: le.transform([x])[0] if x in le.classes_ else -1)
+        else:
+            df[col] = -1
 
-    # Add missing numeric features
+    # Ensure all expected numeric columns exist
     for col in expected_features:
         if col not in df.columns:
             df[col] = 0
 
-    # Keep only expected numeric features
-    X_num = df[expected_features].copy()
+    # Fill missing numeric with median
+    df[expected_features] = df[expected_features].fillna(df[expected_features].median())
 
-    # Scale numeric safely
+    # Scale numeric columns safely
     X_num_scaled = pd.DataFrame(
-        scaler.transform(X_num),
+        scaler.transform(df[expected_features]),
         columns=expected_features
     )
 
-    # Combine numeric + categorical (if exist)
+    # Add encoded categoricals
     for col in cat_cols:
-        if col in df.columns:
-            X_num_scaled[col] = df[col]
+        X_num_scaled[col] = df[col].values
 
     return X_num_scaled
 
@@ -89,55 +89,46 @@ mode = st.sidebar.radio("Choose an option:", ["Single Entry", "Batch Upload (CSV
 if mode == "Single Entry":
     st.subheader("🧍 Enter Customer Details")
 
-    perc_premium_paid_by_cash_credit = st.number_input("Percentage of Premium Paid by Cash/Credit", 0.0, 1.0, 0.5)
-    
-    # Take Date of Birth and calculate age
-    dob = st.date_input("Date of Birth", date(1990, 1, 1), help="Select the customer's date of birth.")
+    perc_premium_paid_by_cash_credit = st.number_input(
+        "Percentage of Premium Paid by Cash/Credit", 0.0, 1.0, 0.5
+    )
+
+    dob = st.date_input("Date of Birth", date(1990, 1, 1))
     today = date.today()
     age_years = (today - dob).days / 365.25
     age_in_days = age_years * 365.25
-
     st.info(f"🧓 Age calculated: **{age_years:.1f} years**")
 
     Income = st.number_input("Income", 0, 10000000, 300000)
-    Count_3_6_months_late = st.number_input("Count (3-6 months late)", 0.0, 10.0, 0.0,
-        help="Number of times customer paid premiums 3–6 months late.")
-    Count_6_12_months_late = st.number_input("Count (6-12 months late)", 0.0, 10.0, 0.0,
-        help="Number of times customer paid premiums 6–12 months late.")
-    Count_more_than_12_months_late = st.number_input("Count (>12 months late)", 0.0, 10.0, 0.0,
-        help="Number of times customer paid premiums more than 12 months late.")
+    Count_3_6_months_late = st.number_input("Count (3-6 months late)", 0.0, 10.0, 0.0)
+    Count_6_12_months_late = st.number_input("Count (6-12 months late)", 0.0, 10.0, 0.0)
+    Count_more_than_12_months_late = st.number_input("Count (>12 months late)", 0.0, 10.0, 0.0)
     application_underwriting_score = st.number_input("Application Underwriting Score", 0.0, 100.0, 99.0)
     no_of_premiums_paid = st.number_input("Number of Premiums Paid", 0, 100, 10)
 
-    # Full names for sourcing channel
-    channel_mapping = {
+    # Full sourcing channel labels
+    channel_map = {
         "Agent / Advisor (A)": "A",
         "Branch Office (B)": "B",
-        "Corporate Tie-up / Bancassurance (C)": "C",
+        "Corporate / Bancassurance (C)": "C",
         "Digital / Online (D)": "D",
-        "Telemarketing / Call Center (E)": "E"
+        "Telemarketing / Call Center (E)": "E",
     }
-    sourcing_channel_display = st.selectbox(
-        "Sourcing Channel",
-        list(channel_mapping.keys()),
-        help="Select how the policy was originally sourced."
-    )
-    sourcing_channel = channel_mapping[sourcing_channel_display]
+    sourcing_channel = channel_map[
+        st.selectbox("Sourcing Channel", list(channel_map.keys()))
+    ]
 
-    # Full names for residence area
-    area_mapping = {
+    area_map = {
         "Urban (City / Town)": "Urban",
-        "Rural (Village / Non-urban)": "Rural"
+        "Rural (Village / Non-urban)": "Rural",
     }
-    residence_display = st.selectbox(
-        "Residence Area Type",
-        list(area_mapping.keys()),
-        help="Select where the customer resides."
-    )
-    residence_area_type = area_mapping[residence_display]
+    residence_area_type = area_map[
+        st.selectbox("Residence Area Type", list(area_map.keys()))
+    ]
 
     premium = st.number_input("Premium Amount", 0, 100000, 5000)
 
+    # Prepare input
     input_data = pd.DataFrame({
         "perc_premium_paid_by_cash_credit": [perc_premium_paid_by_cash_credit],
         "age_in_days": [age_in_days],
@@ -153,12 +144,17 @@ if mode == "Single Entry":
     })
 
     X_final = prepare_input(input_data)
-    prob = model.predict_proba(X_final)[:, 1][0]
 
-    st.markdown("---")
+    # Predict safely
+    try:
+        prob = model.predict_proba(X_final)[:, 1][0]
+    except Exception as e:
+        st.error(f"Prediction error: {e}")
+        st.stop()
+
     st.success(f"**Predicted Renewal Probability:** {prob:.2%}")
 
-    # Gauge Visualization
+    # Gauge visualization
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=prob * 100,
@@ -176,51 +172,48 @@ if mode == "Single Entry":
     st.plotly_chart(fig, use_container_width=True)
 
 # ======================
-# BATCH UPLOAD MODE
+# BATCH MODE
 # ======================
 else:
     st.subheader("📂 Upload Customer Data (CSV)")
-    st.markdown("Make sure your CSV includes a **Date_of_Birth** column or **age_in_days** column.")
+    st.info("Your CSV should include either a `Date_of_Birth` column or `age_in_days`.")
 
-    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
-
+    uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
     if uploaded_file:
-        data = pd.read_csv(uploaded_file)
+        df = pd.read_csv(uploaded_file)
 
-        # Convert DOB to age if present
-        if "Date_of_Birth" in data.columns:
+        if "Date_of_Birth" in df.columns:
             today = date.today()
-            data["age_in_days"] = data["Date_of_Birth"].apply(
+            df["age_in_days"] = df["Date_of_Birth"].apply(
                 lambda d: (today - pd.to_datetime(d).date()).days if pd.notnull(d) else np.nan
             )
 
-        st.dataframe(data.head())
+        df = df.dropna(subset=["age_in_days"], how="any")
+        st.dataframe(df.head())
 
-        X_final = prepare_input(data)
-        preds = model.predict_proba(X_final)[:, 1]
-        data["Renewal_Probability"] = preds
+        X_final = prepare_input(df)
+        try:
+            preds = model.predict_proba(X_final)[:, 1]
+        except Exception as e:
+            st.error(f"Prediction error: {e}")
+            st.stop()
 
+        df["Renewal_Probability"] = preds
         st.subheader("🔍 Predicted Renewal Probabilities")
-        st.dataframe(data.head(10))
+        st.dataframe(df.head(10))
 
         # Visualization
-        fig1 = px.histogram(
-            data,
-            x="Renewal_Probability",
-            nbins=20,
-            title="Distribution of Renewal Probabilities",
-            color_discrete_sequence=["#2b8cbe"]
-        )
-        st.plotly_chart(fig1, use_container_width=True)
+        fig = px.histogram(df, x="Renewal_Probability", nbins=20, title="Distribution of Renewal Probabilities")
+        st.plotly_chart(fig, use_container_width=True)
 
-        avg_prob = data["Renewal_Probability"].mean()
-        high_prob_pct = (data["Renewal_Probability"] > 0.6).mean() * 100
+        avg_prob = df["Renewal_Probability"].mean()
+        high_prob_pct = (df["Renewal_Probability"] > 0.6).mean() * 100
 
         col1, col2 = st.columns(2)
         col1.metric("Average Renewal Probability", f"{avg_prob:.2%}")
-        col2.metric("Customers Likely to Renew (>0.6)", f"{high_prob_pct:.1f}%")
+        col2.metric("Likely Renewers (>0.6)", f"{high_prob_pct:.1f}%")
 
-        csv = data.to_csv(index=False).encode("utf-8")
+        csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Predictions", csv, "renewal_predictions.csv", "text/csv")
     else:
-        st.info("👆 Upload a CSV file to predict renewal probabilities in bulk.")
+        st.info("👆 Upload a CSV file to start predictions.")
