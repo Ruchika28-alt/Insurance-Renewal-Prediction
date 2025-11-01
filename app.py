@@ -20,9 +20,27 @@ except FileNotFoundError:
     st.error("❌ Model, scaler, or encoder file not found. Ensure all .pkl files are in this folder.")
     st.stop()
 
-# Sidebar for mode
+# Sidebar
 st.sidebar.header("⚙️ Select Prediction Mode")
 mode = st.sidebar.radio("Choose an option:", ["Single Entry", "Batch Upload (CSV)"])
+
+# Get feature names from scaler if available
+try:
+    scaler_features = scaler.feature_names_in_
+except AttributeError:
+    scaler_features = [
+        "perc_premium_paid_by_cash_credit",
+        "age_in_days",
+        "Income",
+        "Count_3-6_months_late",
+        "Count_6-12_months_late",
+        "Count_more_than_12_months_late",
+        "application_underwriting_score",
+        "no_of_premiums_paid",
+        "premium"
+    ]
+
+cat_cols = ["sourcing_channel", "residence_area_type"]
 
 # ======================
 # SINGLE ENTRY MODE
@@ -33,14 +51,14 @@ if mode == "Single Entry":
     perc_premium_paid_by_cash_credit = st.number_input("Percentage of Premium Paid by Cash/Credit", 0.0, 1.0, 0.5)
     age_in_days = st.number_input("Age in Days", min_value=5000, max_value=40000, value=15000)
     Income = st.number_input("Income", min_value=0, max_value=10000000, value=300000)
-    Count_3_6_months_late = st.number_input("Count (3-6 months late)", min_value=0.0, max_value=10.0, value=0.0)
-    Count_6_12_months_late = st.number_input("Count (6-12 months late)", min_value=0.0, max_value=10.0, value=0.0)
-    Count_more_than_12_months_late = st.number_input("Count (>12 months late)", min_value=0.0, max_value=10.0, value=0.0)
-    application_underwriting_score = st.number_input("Application Underwriting Score", min_value=0.0, max_value=100.0, value=99.0)
-    no_of_premiums_paid = st.number_input("Number of Premiums Paid", min_value=0, max_value=100, value=10)
+    Count_3_6_months_late = st.number_input("Count (3-6 months late)", 0.0, 10.0, 0.0)
+    Count_6_12_months_late = st.number_input("Count (6-12 months late)", 0.0, 10.0, 0.0)
+    Count_more_than_12_months_late = st.number_input("Count (>12 months late)", 0.0, 10.0, 0.0)
+    application_underwriting_score = st.number_input("Application Underwriting Score", 0.0, 100.0, 99.0)
+    no_of_premiums_paid = st.number_input("Number of Premiums Paid", 0, 100, 10)
     sourcing_channel = st.selectbox("Sourcing Channel", ["A", "B", "C", "D", "E"])
     residence_area_type = st.selectbox("Residence Area Type", ["Urban", "Rural"])
-    premium = st.number_input("Premium Amount", min_value=0, max_value=100000, value=5000)
+    premium = st.number_input("Premium Amount", 0, 100000, 5000)
 
     input_data = pd.DataFrame({
         "perc_premium_paid_by_cash_credit": [perc_premium_paid_by_cash_credit],
@@ -56,16 +74,21 @@ if mode == "Single Entry":
         "premium": [premium],
     })
 
-    # Encode categorical columns
-    cat_cols = ["sourcing_channel", "residence_area_type"]
+    # Encode categorical
     for col in cat_cols:
         if col in encoders:
             le = encoders[col]
             input_data[col] = input_data[col].map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
 
-    # Scale numerical features
-    num_cols = [c for c in input_data.columns if c not in cat_cols]
-    input_data[num_cols] = scaler.transform(input_data[num_cols])
+    # Align columns to scaler
+    for col in scaler_features:
+        if col not in input_data.columns:
+            input_data[col] = 0  # add missing feature if any
+
+    input_data = input_data[[*scaler_features, *cat_cols]]
+
+    # Scale numeric part
+    input_data[scaler_features] = scaler.transform(input_data[scaler_features])
 
     # Predict
     prob = model.predict_proba(input_data)[:, 1][0]
@@ -91,18 +114,18 @@ else:
         X = data.drop(columns=["id"], errors="ignore")
         X = X.fillna(X.median(numeric_only=True))
 
-        # Encode categorical columns
-        cat_cols = ["sourcing_channel", "residence_area_type"]
         for col in cat_cols:
             if col in encoders:
                 le = encoders[col]
                 X[col] = X[col].map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
 
-        # Scale numeric
-        num_cols = [c for c in X.columns if c not in cat_cols]
-        X[num_cols] = scaler.transform(X[num_cols])
+        for col in scaler_features:
+            if col not in X.columns:
+                X[col] = 0
 
-        # Predict
+        X = X[[*scaler_features, *cat_cols]]
+        X[scaler_features] = scaler.transform(X[scaler_features])
+
         preds = model.predict_proba(X)[:, 1]
         data["Renewal_Probability"] = preds
 
